@@ -31,6 +31,8 @@ class User(Base):
     portfolio_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     github_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     resume_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    profile_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    profile_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -61,6 +63,11 @@ class RankingRule(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     name: Mapped[str] = mapped_column(String(255), index=True)
+    attribute: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    condition: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
+    match_value: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=0.0)
+
     logic: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     weights: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)

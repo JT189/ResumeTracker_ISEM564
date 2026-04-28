@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import re
+import uuid
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -13,6 +16,8 @@ from schemas import (
     JobCreate,
     JobRead,
     JobUpdate,
+    ProfileRead,
+    ProfileUpdate,
     RSSSourceCreate,
     RSSSourceRead,
     RSSSourceUpdate,
@@ -36,9 +41,49 @@ class RSSFetchRequest(BaseModel):
 def create_app() -> FastAPI:
     app = FastAPI(title="ResumeTracker API")
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+    )
+
     @app.on_event("startup")
     def on_startup() -> None:
+        _ensure_sqlite_schema()
         Base.metadata.create_all(bind=engine)
+
+    def _ensure_sqlite_schema() -> None:
+        import os
+        import sqlite3
+
+        db_path = os.path.join(os.path.dirname(__file__), "jobs.db")
+        if not os.path.exists(db_path):
+            return
+
+        required: dict[str, set[str]] = {
+            "users": {"id", "email", "profile_summary", "profile_updated_at"},
+            "ranking_rules": {"id", "user_id", "attribute", "condition", "match_value", "weight"},
+        }
+
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                for table, cols in required.items():
+                    cur = conn.execute(f"PRAGMA table_info({table})")
+                    present = {row[1] for row in cur.fetchall()}
+                    if not cols.issubset(present):
+                        conn.close()
+                        os.remove(db_path)
+                        return
+            finally:
+                conn.close()
+        except Exception:
+            return
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -54,6 +99,69 @@ def create_app() -> FastAPI:
         db.commit()
         db.refresh(obj)
         return obj
+
+    def _extract_profile_fields(text: str) -> dict[str, Optional[str]]:
+        raw = (text or "").strip()
+        if not raw:
+            return {"full_name": None, "email": None, "phone": None}
+
+        email_match = re.search(r"([A-Za-z0-9._%+]+@[A-Za-z0-9.]+\.[A-Za-z]{2,})", raw)
+        phone_match = re.search(r"(\+?1\s*)?(\(?\d{3}\)?[\s.]?)\d{3}[\s.]?\d{4}", raw)
+
+        first_line = raw.splitlines()[0].strip() if raw.splitlines() else ""
+        name_guess = first_line if 2 <= len(first_line.split()) <= 5 and len(first_line) <= 64 else None
+
+        phone = None
+        try:
+            phone = phone_match.group(0).strip() if phone_match else None
+        except Exception:
+            phone = None
+
+        return {
+            "full_name": name_guess,
+            "email": email_match.group(1).strip() if email_match else None,
+            "phone": phone,
+        }
+
+    def _read_resume_text(file: UploadFile) -> str:
+        import io
+
+        filename = (file.filename or "").lower()
+        data = file.file.read()
+        if not data:
+            return ""
+
+        if filename.endswith(".txt"):
+            try:
+                return data.decode("utf-8", errors="ignore")
+            except Exception:
+                return ""
+
+        if filename.endswith(".pdf"):
+            try:
+                from pypdf import PdfReader
+
+                reader = PdfReader(io.BytesIO(data))
+                parts: list[str] = []
+                for page in reader.pages:
+                    t = page.extract_text() or ""
+                    if t:
+                        parts.append(t)
+                return "\n".join(parts)
+            except Exception:
+                return ""
+
+        if filename.endswith(".docx"):
+            try:
+                import docx
+
+                doc = docx.Document(io.BytesIO(data))
+                parts = [p.text for p in doc.paragraphs if p.text]
+                return "\n".join(parts)
+            except Exception:
+                return ""
+
+        return ""
 
     @app.get("/users", response_model=list[UserRead])
     def list_users(db: Session = Depends(get_db)) -> Sequence[User]:
@@ -82,6 +190,151 @@ def create_app() -> FastAPI:
         db.commit()
         db.refresh(obj)
         return obj
+
+    def _build_profile_summary(*, user: User, resume_text: Optional[str]) -> str:
+        lines: list[str] = []
+
+        def add(label: str, value: Optional[str]) -> None:
+            v = (value or "").strip()
+            if v:
+                lines.append(f"{label}: {v}")
+
+        add("Name", user.full_name)
+        add("Email", user.email)
+        add("Phone", user.phone)
+        add("Location", user.location)
+        add("Headline", user.headline)
+        add("LinkedIn", user.linkedin_url)
+        add("Portfolio", user.portfolio_url)
+        add("GitHub", user.github_url)
+        add("Resume", user.resume_url)
+
+        text = (resume_text or "").strip()
+        if text:
+            lines.append("")
+            lines.append("Resume text")
+            snippet = text[:1500].strip()
+            lines.append(snippet)
+
+        return "\n".join(lines).strip() or "No profile data saved"
+
+    @app.post("/users/{user_id}/profile", response_model=ProfileRead)
+    def update_profile(user_id: int, payload: ProfileUpdate, db: Session = Depends(get_db)) -> ProfileRead:
+        from datetime import datetime
+
+        user = db.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        update = payload.model_dump(exclude_unset=True)
+        resume_text = update.pop("resume_text", None)
+
+        if "email" in update and update["email"] is not None:
+            existing = db.query(User).filter(User.email == update["email"]).first()
+            if existing is not None and existing.id != user_id:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+
+        for k, v in update.items():
+            setattr(user, k, v)
+
+        user.profile_summary = _build_profile_summary(user=user, resume_text=resume_text)
+        user.profile_updated_at = datetime.utcnow()
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        if not user.profile_updated_at:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Profile update failed")
+
+        return ProfileRead(
+            user_id=user.id,
+            profile_summary=str(user.profile_summary or ""),
+            profile_updated_at=user.profile_updated_at,
+        )
+
+    @app.post("/profile_from_resume", response_model=ProfileRead)
+    def profile_from_resume(file: UploadFile = File(...), db: Session = Depends(get_db)) -> ProfileRead:
+        from datetime import datetime
+
+        resume_text = _read_resume_text(file)
+        fields = _extract_profile_fields(resume_text)
+
+        generated_email = fields.get("email") or f"user{uuid.uuid4().hex}@example.com"
+        existing = db.query(User).filter(User.email == generated_email).first()
+        if existing is None:
+            user = User(email=generated_email)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        else:
+            user = existing
+
+        if fields.get("full_name"):
+            user.full_name = fields["full_name"]
+        if fields.get("phone"):
+            user.phone = fields["phone"]
+
+        user.resume_url = file.filename
+        user.profile_summary = _build_profile_summary(user=user, resume_text=resume_text)
+        user.profile_updated_at = datetime.utcnow()
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        if not user.profile_updated_at:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Profile update failed")
+
+        return ProfileRead(
+            user_id=user.id,
+            profile_summary=str(user.profile_summary or ""),
+            profile_updated_at=user.profile_updated_at,
+        )
+
+    @app.get("/users/{user_id}/profile", response_model=ProfileRead)
+    def view_profile(user_id: int, db: Session = Depends(get_db)) -> ProfileRead:
+        user = db.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        if not user.profile_summary or not user.profile_updated_at:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not set")
+
+        return ProfileRead(
+            user_id=user.id,
+            profile_summary=str(user.profile_summary),
+            profile_updated_at=user.profile_updated_at,
+        )
+
+    @app.get("/job_attributes")
+    def job_attributes() -> list[dict[str, str]]:
+        return [
+            {"value": "title", "label": "Title"},
+            {"value": "company", "label": "Company"},
+            {"value": "description", "label": "Role requirement"},
+        ]
+
+    class ReplaceRulesRequest(BaseModel):
+        user_id: int
+        rules: list[RankingRuleCreate]
+
+    @app.post("/ranking_rules/replace", response_model=list[RankingRuleRead])
+    def replace_ranking_rules(payload: ReplaceRulesRequest, db: Session = Depends(get_db)) -> Sequence[RankingRule]:
+        user = db.get(User, payload.user_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User does not exist")
+
+        db.query(RankingRule).filter(RankingRule.user_id == payload.user_id).delete()
+        created: list[RankingRule] = []
+        for rule in payload.rules:
+            obj = RankingRule(**rule.model_dump())
+            db.add(obj)
+            created.append(obj)
+
+        db.commit()
+        for obj in created:
+            db.refresh(obj)
+        return created
 
     @app.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_user(user_id: int, db: Session = Depends(get_db)) -> Response:

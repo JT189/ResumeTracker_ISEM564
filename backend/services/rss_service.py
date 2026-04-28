@@ -18,34 +18,30 @@ def _extract_entry_fields(entry: Any) -> Tuple[str, Optional[str], Optional[str]
     return title.strip(), (company.strip() if isinstance(company, str) else None), url, description
 
 
-def _score_title_with_weights(title: str, weights: Dict[str, Any]) -> float:
-    title_lower = title.lower()
-    score = 0.0
-
-    title_contains = weights.get("title_contains")
-    if isinstance(title_contains, dict):
-        for phrase, points in title_contains.items():
-            if not isinstance(phrase, str):
-                continue
-            if phrase.lower() in title_lower:
-                try:
-                    score += float(points)
-                except (TypeError, ValueError):
-                    continue
-
-    phrase = weights.get("phrase")
-    points = weights.get("points")
-    if isinstance(phrase, str):
-        if phrase.lower() in title_lower:
-            try:
-                score += float(points)
-            except (TypeError, ValueError):
-                pass
-
-    return score
+def _normalize_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return str(value).strip().lower()
 
 
-def _apply_ranking_rules(db: Session, user_id: int, title: str) -> float:
+def _match_rule(*, field_value: str, condition: str, needle: str) -> bool:
+    if not needle:
+        return False
+    if condition == "contains":
+        return needle in field_value
+    if condition == "excludes":
+        return needle not in field_value
+    return False
+
+
+def _apply_ranking_rules(
+    db: Session,
+    *,
+    user_id: int,
+    title: str,
+    company: Optional[str],
+    description: Optional[str],
+) -> float:
     base_score = 0.0
 
     rules: List[RankingRule] = (
@@ -56,11 +52,27 @@ def _apply_ranking_rules(db: Session, user_id: int, title: str) -> float:
     )
 
     for rule in rules:
-        weights = rule.weights if isinstance(rule.weights, dict) else {}
-        base_score += _score_title_with_weights(title, weights)
+        attribute = _normalize_text(rule.attribute)
+        condition = _normalize_text(rule.condition)
+        needle = _normalize_text(rule.match_value)
 
-    if "senior tpm" in title.lower():
-        base_score += 30.0
+        if not attribute or not condition or not needle:
+            continue
+
+        if attribute == "title":
+            field_value = _normalize_text(title)
+        elif attribute == "company":
+            field_value = _normalize_text(company)
+        elif attribute == "description":
+            field_value = _normalize_text(description)
+        else:
+            continue
+
+        if _match_rule(field_value=field_value, condition=condition, needle=needle):
+            try:
+                base_score += float(rule.weight or 0.0)
+            except (TypeError, ValueError):
+                continue
 
     return base_score
 
@@ -99,7 +111,13 @@ def fetch_and_rank_jobs(
         if existing is not None:
             continue
 
-        score = _apply_ranking_rules(db, user_id, title)
+        score = _apply_ranking_rules(
+            db,
+            user_id=user_id,
+            title=title,
+            company=company,
+            description=description,
+        )
 
         job = Job(
             user_id=user_id,

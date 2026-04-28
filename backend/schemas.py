@@ -42,13 +42,38 @@ class UserRead(UserBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    profile_summary: Optional[str] = None
+    profile_updated_at: Optional[datetime] = None
+
+
+class ProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    location: Optional[str] = None
+    headline: Optional[str] = None
+    phone: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    portfolio_url: Optional[str] = None
+    github_url: Optional[str] = None
+    resume_url: Optional[str] = None
+    resume_text: Optional[str] = None
+
+
+class ProfileRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: int
+    profile_summary: str
+    profile_updated_at: datetime
 
 
 class RankingRuleBase(BaseModel):
     user_id: int
     name: str = Field(min_length=1, max_length=255)
-    logic: Optional[str] = None
-    weights: dict[str, Any] = Field(default_factory=dict)
+    attribute: str = Field(min_length=1, max_length=64)
+    condition: str = Field(min_length=1, max_length=16)
+    match_value: str = Field(min_length=0, max_length=255)
+    weight: float = Field(ge=0, le=100)
     is_active: bool = True
 
 
@@ -58,8 +83,10 @@ class RankingRuleCreate(RankingRuleBase):
 
 class RankingRuleUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    logic: Optional[str] = None
-    weights: Optional[dict[str, Any]] = None
+    attribute: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    condition: Optional[str] = Field(default=None, min_length=1, max_length=16)
+    match_value: Optional[str] = Field(default=None, min_length=0, max_length=255)
+    weight: Optional[float] = Field(default=None, ge=0, le=100)
     is_active: Optional[bool] = None
 
 

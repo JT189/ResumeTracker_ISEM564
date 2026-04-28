@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+email-validator
+feedparser
+pypdf
+python-docx
+python-multipart
