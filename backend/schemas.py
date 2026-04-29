@@ -21,7 +21,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pass
+    password: Optional[str] = None
 
 
 class UserUpdate(BaseModel):
@@ -44,6 +44,83 @@ class UserRead(UserBase):
     updated_at: datetime
     profile_summary: Optional[str] = None
     profile_updated_at: Optional[datetime] = None
+    analytics_ai_enabled: bool = False
+
+
+class UserSettingsUpdate(BaseModel):
+    analytics_ai_enabled: Optional[bool] = None
+
+
+class AuthRegister(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=4, max_length=128)
+    full_name: Optional[str] = Field(default=None, max_length=255)
+
+
+class AuthLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AuthToken(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: Optional[str] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    reset_token: str = Field(min_length=10)
+    new_password: str = Field(min_length=4, max_length=128)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=4, max_length=128)
+
+
+class AIConnectionBase(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    provider: str = Field(min_length=1, max_length=64)
+    base_url: Optional[str] = None
+    model: str = Field(min_length=1, max_length=128)
+    api_key: Optional[str] = None
+    is_default: bool = False
+
+
+class AIConnectionCreate(AIConnectionBase):
+    pass
+
+
+class AIConnectionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    name: str
+    provider: str
+    base_url: Optional[str]
+    model: str
+    has_api_key: bool = False
+    is_default: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AIConnectionUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    provider: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    base_url: Optional[str] = None
+    model: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    api_key: Optional[str] = None
+    is_default: Optional[bool] = None
 
 
 class ProfileUpdate(BaseModel):
@@ -124,9 +201,42 @@ class RSSSourceRead(RSSSourceBase):
     last_fetched_at: Optional[datetime]
 
 
+class ResumeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    file_name: str
+    content_type: Optional[str]
+    size_bytes: int
+    file_hash: str
+    is_selected: bool
+    created_at: datetime
+
+
+class JobWeightPromptCreate(BaseModel):
+    prompt: str = Field(min_length=1)
+    is_enabled: bool = True
+
+
+class JobWeightPromptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    prompt: str
+    is_enabled: bool
+    created_at: datetime
+
+
+class JobWeightPromptUpdate(BaseModel):
+    is_enabled: Optional[bool] = None
+
+
 class JobBase(BaseModel):
     user_id: int
     rss_source_id: Optional[int] = None
+    resume_id: Optional[int] = None
     ranking_rule_id: Optional[int] = None
 
     title: str = Field(min_length=1, max_length=255)
@@ -138,6 +248,7 @@ class JobBase(BaseModel):
     status: JobStatus = JobStatus.saved
     rank_score: float = 0.0
     applied_at: Optional[datetime] = None
+    is_tracked: bool = False
 
 
 class JobCreate(JobBase):
@@ -146,6 +257,7 @@ class JobCreate(JobBase):
 
 class JobUpdate(BaseModel):
     rss_source_id: Optional[int] = None
+    resume_id: Optional[int] = None
     ranking_rule_id: Optional[int] = None
 
     title: Optional[str] = Field(default=None, min_length=1, max_length=255)
@@ -157,6 +269,7 @@ class JobUpdate(BaseModel):
     status: Optional[JobStatus] = None
     rank_score: Optional[float] = None
     applied_at: Optional[datetime] = None
+    is_tracked: Optional[bool] = None
 
 
 class JobRead(JobBase):

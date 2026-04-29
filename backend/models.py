@@ -23,6 +23,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     headline: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -33,6 +34,7 @@ class User(Base):
     resume_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     profile_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     profile_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    analytics_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -50,10 +52,67 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    resumes: Mapped[list[Resume]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     jobs: Mapped[list[Job]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )
+
+
+class TelemetryEvent(Base):
+    __tablename__ = "telemetry_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    user: Mapped[User] = relationship()
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    user: Mapped[User] = relationship()
+
+
+class AIConnection(Base):
+    __tablename__ = "ai_connections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    base_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model: Mapped[str] = mapped_column(String(128))
+    api_key_ciphertext: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        index=True,
+    )
+
+    user: Mapped[User] = relationship()
+
+    @property
+    def has_api_key(self) -> bool:
+        return bool(self.api_key_ciphertext)
 
 
 class RankingRule(Base):
@@ -100,12 +159,44 @@ class RSSSource(Base):
     jobs: Mapped[list[Job]] = relationship(back_populates="rss_source")
 
 
+class Resume(Base):
+    __tablename__ = "resumes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+
+    file_name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    file_hash: Mapped[str] = mapped_column(String(64), index=True)
+    storage_path: Mapped[str] = mapped_column(Text)
+
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    user: Mapped[User] = relationship(back_populates="resumes")
+
+
+class JobWeightPrompt(Base):
+    __tablename__ = "job_weight_prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+
+    prompt: Mapped[str] = mapped_column(Text)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    user: Mapped[User] = relationship()
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     rss_source_id: Mapped[Optional[int]] = mapped_column(ForeignKey("rss_sources.id"), nullable=True, index=True)
+    resume_id: Mapped[Optional[int]] = mapped_column(ForeignKey("resumes.id"), nullable=True, index=True)
     ranking_rule_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("ranking_rules.id"),
         nullable=True,
@@ -125,6 +216,7 @@ class Job(Base):
     )
     rank_score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    is_tracked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     date_added: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -136,5 +228,6 @@ class Job(Base):
 
     user: Mapped[User] = relationship(back_populates="jobs")
     rss_source: Mapped[Optional[RSSSource]] = relationship(back_populates="jobs")
+    resume: Mapped[Optional[Resume]] = relationship()
     ranking_rule: Mapped[Optional[RankingRule]] = relationship(back_populates="jobs")
 

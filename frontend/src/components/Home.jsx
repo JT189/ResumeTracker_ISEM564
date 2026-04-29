@@ -6,7 +6,7 @@ export function Home() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-white px-6 font-[Inter,ui-sans-serif,system-ui,sans-serif]">
       <p className="mb-10 text-xs font-bold uppercase tracking-[0.35em] text-neutral-900">
-        RESUME TRACKER PRO
+        MY JOB TRACKER
       </p>
       <div className="flex w-full max-w-md flex-col items-center">
         <ToolCard

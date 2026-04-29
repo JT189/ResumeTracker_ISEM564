@@ -36,7 +36,7 @@ export function HomePage() {
         <h1 className="text-4xl md:text-5xl font-bold text-charcoal-dark mb-6 tracking-tight">
           Welcome to{' '}
           <span className="text-charcoal relative inline-block">
-            Resume Tracker Pro
+            My Job Tracker
             <span className="absolute bottom-1 left-0 w-full h-3 bg-gray-200 -z-10 transform -rotate-1"></span>
           </span>
         </h1>
@@ -60,7 +60,7 @@ export function HomePage() {
         />
         <NavCard
           icon={Settings}
-          title="Settings & Config"
+          title="Settings"
           description="Customize your personal profile, fine-tune ranking engine rules, and manage data sources."
           onClick={() => navigate('/config')}
         />
