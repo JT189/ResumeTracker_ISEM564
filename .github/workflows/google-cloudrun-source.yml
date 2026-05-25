@@ -1,18 +1,18 @@
-# .github/workflows/deploy.yml
-# Deploys to Google Cloud Run on every push to main, and supports manual triggers.
-
 name: 'Deploy to Cloud Run from Source'
 
 on:
   push:
     branches:
-      - 'main'          # Fires on every push to the main branch
-  workflow_dispatch:    # Adds the "Run workflow" button in the GitHub Actions UI
+      - 'main'
+  workflow_dispatch:
 
 env:
-  PROJECT_ID: 'resumetracker-497318'   # Your GCP project ID
-  REGION: 'us-central1'                # Cloud Run region
-  SERVICE: 'resumetracker'             # Cloud Run service name
+  PROJECT_ID: 'resumetracker-497318'
+  REGION: 'us-central1'
+  SERVICE: 'resumetracker'
+  # Artifact Registry repo and image path
+  AR_REPO: 'cloud-run-source-deploy'
+  IMAGE: 'us-central1-docker.pkg.dev/resumetracker-497318/cloud-run-source-deploy/resumetracker'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
@@ -25,59 +25,74 @@ jobs:
       id-token: 'write'
 
     steps:
-      # ── Step 1: Checkout source code ──────────────────────────────────────
+      # ── Step 1: Checkout ──────────────────────────────────────────────────
       - name: '📥 Checkout repository'
         uses: 'actions/checkout@v4'
 
-      # ── Step 2: Debug info (helps diagnose issues) ─────────────────────────
+      # ── Step 2: Debug info ────────────────────────────────────────────────
       - name: '🔍 Debug — Print environment info'
         run: |
           echo "=========================================="
-          echo "  Workflow triggered by: ${{ github.event_name }}"
-          echo "  Branch: ${{ github.ref_name }}"
-          echo "  Commit SHA: ${{ github.sha }}"
-          echo "  Actor: ${{ github.actor }}"
-          echo "  GCP Project: ${{ env.PROJECT_ID }}"
-          echo "  Cloud Run Service: ${{ env.SERVICE }}"
-          echo "  Region: ${{ env.REGION }}"
+          echo "  Triggered by : ${{ github.event_name }}"
+          echo "  Branch       : ${{ github.ref_name }}"
+          echo "  Commit SHA   : ${{ github.sha }}"
+          echo "  Actor        : ${{ github.actor }}"
+          echo "  Project      : ${{ env.PROJECT_ID }}"
+          echo "  Service      : ${{ env.SERVICE }}"
+          echo "  Image        : ${{ env.IMAGE }}:${{ github.sha }}"
           echo "=========================================="
 
-      # ── Step 3: Authenticate to GCP using your Service Account JSON Key ────
+      # ── Step 3: Authenticate to GCP ───────────────────────────────────────
       - name: '🔐 Authenticate to Google Cloud'
         id: 'auth'
         uses: 'google-github-actions/auth@v2'
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      # ── Step 4: Set up the gcloud CLI ─────────────────────────────────────
-      - name: '⚙️ Set up Cloud SDK'
-        uses: 'google-github-actions/setup-gcloud@v2'
-        with:
-          project_id: '${{ env.PROJECT_ID }}'
+      # ── Step 4: Configure Docker to use GCP credentials ───────────────────
+      - name: '🐳 Configure Docker for Artifact Registry'
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-      # ── Step 5: Confirm gcloud is authenticated and working ────────────────
-      - name: '✅ Verify gcloud authentication'
+      # ── Step 5: Ensure Artifact Registry repository exists ────────────────
+      - name: '📦 Create Artifact Registry repo (if not exists)'
         run: |
-          gcloud auth list
-          gcloud config list project
-          echo "Authenticated successfully to project: ${{ env.PROJECT_ID }}"
+          gcloud artifacts repositories describe ${{ env.AR_REPO }} \
+            --location=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+          || gcloud artifacts repositories create ${{ env.AR_REPO }} \
+            --repository-format=docker \
+            --location=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --description="Cloud Run deployments"
 
-      # ── Step 6: Deploy source code directly to Cloud Run via Cloud Build ───
-      # Cloud Build will automatically build a container from your source code.
-      # No Dockerfile required — it uses Google's Buildpacks automatically.
+      # ── Step 6: Build Docker image ────────────────────────────────────────
+      - name: '🔨 Build Docker image'
+        run: |
+          docker build \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+
+      # ── Step 7: Push Docker image to Artifact Registry ────────────────────
+      - name: '⬆️ Push image to Artifact Registry'
+        run: |
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # ── Step 8: Deploy image to Cloud Run ────────────────────────────────
       - name: '🚀 Deploy to Cloud Run'
         id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: '${{ env.SERVICE }}'
           region: '${{ env.REGION }}'
-          source: './'
-          flags: '--allow-unauthenticated'   # Remove this if you want auth-required access
+          image: '${{ env.IMAGE }}:${{ github.sha }}'
+          flags: '--allow-unauthenticated'
 
-      # ── Step 7: Print the deployed URL ────────────────────────────────────
+      # ── Step 9: Print deployed URL ────────────────────────────────────────
       - name: '🌐 Show deployed service URL'
         run: |
           echo "=========================================="
           echo "  ✅ Deployment successful!"
-          echo "  🌐 Service URL: ${{ steps.deploy.outputs.url }}"
+          echo "  🌐 URL: ${{ steps.deploy.outputs.url }}"
           echo "=========================================="
