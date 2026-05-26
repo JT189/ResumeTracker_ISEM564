@@ -2276,15 +2276,16 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-# ── Serve React frontend for all non-API paths ────────────────────────────────
+# Serve React frontend for all non-API paths
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static):
-        app.mount("/assets", StaticFiles(directory=os.path.join(_static, "assets")), name="assets")
+    app.mount("/assets", StaticFiles(directory=os.path.join(_static, "assets")), name="assets")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def _spa(full_path: str):
-                return FileResponse(os.path.join(_static, "index.html"))
+@app.get("/{full_path:path}", include_in_schema=False)
+async def _spa(full_path: str):
+    return FileResponse(os.path.join(_static, "index.html"))
+    
 
