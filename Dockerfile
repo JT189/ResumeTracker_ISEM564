@@ -9,7 +9,8 @@ RUN npm install
 COPY frontend/ ./
 
 # Empty string = relative URLs, so API calls hit the same domain as the frontend
-ENV VITE_API_BASE_URL=""
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 RUN npm run build
 # Output lands in /frontend/dist
