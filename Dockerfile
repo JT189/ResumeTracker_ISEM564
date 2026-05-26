@@ -9,8 +9,7 @@ RUN npm install
 COPY frontend/ ./
 
 # Empty string = relative URLs, so API calls hit the same domain as the frontend
-ARG VITE_API_BASE_URL=""
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ENV VITE_API_BASE_URL="https://resumetracker-655812234359.us-central1.run.app"
 
 RUN npm run build
 # Output lands in /frontend/dist
